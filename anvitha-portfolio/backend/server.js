@@ -11,6 +11,22 @@ app.use(express.json({ limit: '10kb' }))
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
+// On Vercel this file runs as a serverless function, so connect to MongoDB on demand and reuse the connection.
+let connecting
+function connectDB() {
+  if (!connecting) {
+    connecting = mongoose.connect(process.env.MONGODB_URI).catch(err => { connecting = null; throw err })
+  }
+  return connecting
+}
+app.use(async (_req, res, next) => {
+  try { await connectDB(); next() }
+  catch (err) {
+    console.error('MongoDB connection failed:', err.message)
+    res.status(500).json({ error: 'Database connection failed.' })
+  }
+})
+
 // Save a contact form submission to MongoDB
 app.post('/api/contact', async (req, res) => {
   const { name, email, message } = req.body || {}
@@ -34,8 +50,12 @@ app.get('/api/messages', async (req, res) => {
   res.json(await Message.find().sort({ createdAt: -1 }).limit(200))
 })
 
-const PORT = process.env.PORT || 5000
-mongoose
-  .connect(process.env.MONGODB_URI)
-  .then(() => app.listen(PORT, () => console.log(`API running on port ${PORT}`)))
-  .catch(err => { console.error('MongoDB connection failed:', err.message); process.exit(1) })
+// Local development: start a normal server. On Vercel the exported app is used instead.
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000
+  connectDB()
+    .then(() => app.listen(PORT, () => console.log(`API running on port ${PORT}`)))
+    .catch(err => { console.error('MongoDB connection failed:', err.message); process.exit(1) })
+}
+
+export default app
